@@ -35,7 +35,7 @@ battery_level_max = 90
 battery_level_min = 10
 battery_level_discharge_min = 20
 charging_efficiency = 0.70
-discharge_power = 100
+discharge_power = 85
 
 def get_fritz_sid():
   res = httpx.get(f'{fritz_url}/login_sid.lua?username={fritz_user}')
@@ -54,6 +54,7 @@ def fritz_send_command(cmd, ain):
   res = httpx.get(f'{fritz_url}/webservices/homeautoswitch.lua?switchcmd={cmd}&sid={sid}&ain={ain}')
   if res.status_code != 200:
     raise Exception(f'Fritz!Box API call failed: {res.text}')
+  return res.text
 
 def fritz_charge_switch_on():
   print('fritz charge switch on')
@@ -70,6 +71,12 @@ def fritz_discharge_switch_on():
 def fritz_discharge_switch_off():
   print('fritz discharge switch off')
   fritz_send_command('setswitchoff', fritz_discharge_ain)
+
+def fritz_get_reading(ain):
+  res = fritz_send_command('getswitchpower', ain)
+  if res == 'inval':
+    raise Exception(f'Fritz!Box API could not retrieve power reading')
+  return int(res) / 1000
 
 def powerfox_get_reading():
   res = httpx.get('https://backend.powerfox.energy/api/2.0/my/main/current\?unit\=kwh', auth=httpx.BasicAuth(powerfox_user, powerfox_pass), timeout=45)
@@ -288,68 +295,11 @@ while True:
         print(f"charging {watts:.0f} W")
         blynk_write_pin('V5', watts)
       elif is_discharing():
-        blynk_write_pin('V5', -discharge_power)
+        blynk_write_pin('V5', -fritz_get_reading(fritz_discharge_ain) if not simulation else discharge_power)
       else:
         blynk_write_pin('V5', 0)
 
       print()
-
-      # simulation = blynk_read_pin('V2') == '1'
-      # if simulation:
-      #   powerfox = int(blynk_read_pin('V3')) - power
-      #   battery = int(blynk_read_pin('V4'))
-      # else:
-      #   powerfox = get_powerfox_reading()
-      #   battery = get_arduino_battery()
-
-      # print(f'powerfox: {powerfox:.2f} W')
-      # blynk_write_pin('V0', powerfox)
-
-      # print(f'battery: {battery}%')
-      # blynk_write_pin('V6', battery)
-
-      # if (state < 0 and battery <= battery_min) or (state > 0 and battery >= battery_max):
-      #   switch_state(0)
-
-      # buff.append(powerfox)
-      # if len(buff) >= history_length:
-      #   curr = median(buff)
-      #   if state == 0:
-      #     if curr > 50 and battery > battery_min:
-      #       # switch_state(-1)
-      #       pass # remove discharge
-      #     elif curr < -50 and battery < battery_max:
-      #       switch_state(1)
-      #   elif (state > 0 and curr > 0) or (state < 0 and curr < 0):
-      #       switch_state(0)
-
-      # if state != 0:
-      #   charging = get_arduino_vc(arduino_charge_addr)
-      #   charging2 = get_arduino_vc(arduino_discharge_addr) # remove dischage
-      #   watts = (charging['v'] * charging['c'] + charging2['v'] * charging2['c']) / charging_efficiency * -1
-      #   # remove discharge "*2"
-      #   power = max(-max_charging_power*2, min(max_discharging_power, (powerfox + watts) * (.9 if state < 0 else .8)))
-      #   if (state > 0 and power > 0) or (state < 0 and power < 0):
-      #     power = 0
-      #   print(f'setting power to: {power:.2f} W')
-
-      # if state > 0:
-      #   set_charging_power(abs(power))
-      #   charging = get_arduino_vc(arduino_charge_addr)
-      #   charging2 = get_arduino_vc(arduino_discharge_addr) # remove dischage
-      #   watts = charging['v'] * charging['c'] + charging2['v'] * charging2['c']
-      #   print(f"charging {watts:.2f} W")
-      #   blynk_write_pin('V5', watts)
-      # # remove dischage
-      # # elif state < 0:
-      # #   set_discharging_power(power)
-      # #   discharging = get_arduino_vc(arduino_discharge_addr)
-      # #   watts = discharging['v'] * discharging['c']
-      # #   print(f"discharging {watts:.2f} W")
-      # #   blynk_write_pin('V5', power) #watts)
-      # else:
-      #   power = 0
-      #   blynk_write_pin('V5', 0)
 
       time.sleep(10)
   except KeyboardInterrupt:
