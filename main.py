@@ -16,12 +16,9 @@ log = logging.getLogger(__name__)
 
 interval_time = 10
 history_length = 6
-battery_min = 10
-battery_level_max = 90
-battery_level_min = 10
-battery_level_discharge_min = 20
 charging_efficiency = 0.8
 discharge_power = 85
+discharge_minimum_consumption = 100
 
 with open('calibration.json') as file:
   calibration = json.load(file)
@@ -35,10 +32,10 @@ def batter_power_to_fritz_power(power):
 max_charging_power = charging_power_levels[-1]
 
 def everything_off():
+  fritz_discharge_switch_off()
+  fritz_charge_switch_off()
   arduino_set_power_setting(0)
   arduino_set_relais(0)
-  fritz_charge_switch_off()
-  fritz_discharge_switch_off()
 
 def clamp_amp(a):
   return max(0, min(a, 5))
@@ -60,6 +57,8 @@ def set_discharging():
   fritz_discharge_switch_on()
 
 def is_discharge_time():
+  return True
+
   # simulation
   if blynk_read_pin('V2') == '1':
     return blynk_read_pin('V7') == '1'
@@ -118,6 +117,10 @@ while True:
     switch_state(STATE_IDLE)
 
     while True:
+      battery_level_max = int(blynk_read_pin('V9'))
+      battery_level_min = int(blynk_read_pin('V8'))
+      battery_level_discharge_min = battery_level_min + 5
+
       info = arduino_get_battery_info()
 
       if is_charging():
@@ -148,13 +151,13 @@ while True:
       buff.append(current_consumption)
       if len(buff) >= history_length:
         median_current_consumption = median(buff)
-        if is_idle() and median_current_consumption < -50 and battery_level < battery_level_max and not is_discharge_time():
+        if is_idle() and median_current_consumption < -50 and battery_level < battery_level_max: # and not is_discharge_time()
           switch_state(STATE_CHARGE)
         elif (is_charging() and median_current_consumption > 0) or (is_charging() and battery_level >= battery_level_max):
           switch_state(STATE_IDLE)
-        elif is_discharing() and (battery_level <= battery_level_min or not is_discharge_time() or (median_current_consumption + discharge_power) < 150):
+        elif is_discharing() and (battery_level <= battery_level_min or not is_discharge_time() or (median_current_consumption + discharge_power) < discharge_minimum_consumption):
           switch_state(STATE_IDLE)
-        elif is_idle() and is_discharge_time() and battery_level >= battery_level_discharge_min and median_current_consumption >= 150:
+        elif is_idle() and is_discharge_time() and battery_level >= battery_level_discharge_min and median_current_consumption >= discharge_minimum_consumption:
           switch_state(STATE_DISCHARGE)
 
       if is_charging():
