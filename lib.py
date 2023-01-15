@@ -27,6 +27,10 @@ arduino_url = os.getenv("ARDUINO_URL")
 
 blynk_token = os.getenv("BLYNK_TOKEN")
 
+shelly_url = os.getenv("SHELLY_URL")
+shelly_user = os.getenv("SHELLY_USER")
+shelly_pass = os.getenv("SHELLY_PASSWORD")
+
 log = logging.getLogger(__name__)
 
 def get_fritz_sid():
@@ -67,7 +71,7 @@ def fritz_discharge_switch_off():
 def fritz_get_power_reading(ain):
   res = fritz_send_command('getswitchpower', ain)
   if res == 'inval':
-    raise Exception(f'Fritz!Box API could not retrieve power reading')
+    raise Exception('Fritz!Box API could not retrieve power reading')
   return int(res) / 1000
 
 def fritz_get_discharge_power():
@@ -86,6 +90,11 @@ def powerfox_get_reading():
     except httpx.ConnectTimeout or socket.timeout or httpcore.ReadTimeout or httpx.ReadTimeout or TimeoutError:
       log.warn(f'powerfox request failed (retry: {n + 1})')
       pass
+
+def shelly_get_reading():
+  res = httpx.get(f'{shelly_url}/status', auth=httpx.BasicAuth(shelly_user,shelly_pass)).json()
+  [a, b, c] = res['emeters']
+  return a['power'] + b['power'] + c['power']
 
 def request_arduino_url(path, method='GET'):
   for n in range(10):

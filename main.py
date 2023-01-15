@@ -14,9 +14,10 @@ logging.basicConfig(level='DEBUG', format='[%(asctime)s] [%(levelname)s] %(messa
 logging.getLogger('httpx').setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
-interval_time = 10
-history_length = 6
+interval_time = 1
+history_length = 120
 charging_efficiency = 0.8
+charging_power_factor = 0.9
 discharge_power = 85
 discharge_minimum_consumption = 100
 
@@ -25,9 +26,9 @@ with open('calibration.json') as file:
 
 charging_power_levels = [c['fritz'] for c in calibration]
 
-batter_power_to_fritz_power_fit = np.polyfit([c['battery'] for c in calibration], charging_power_levels, deg=5)
-def batter_power_to_fritz_power(power):
-  return np.polyval(batter_power_to_fritz_power_fit, power)
+battery_power_to_fritz_power_fit = np.polyfit([c['battery'] for c in calibration], charging_power_levels, deg=5)
+def battery_power_to_fritz_power(power):
+  return np.polyval(battery_power_to_fritz_power_fit, power)
 
 max_charging_power = charging_power_levels[-1]
 
@@ -124,7 +125,7 @@ while True:
       info = arduino_get_battery_info()
 
       if is_charging():
-        battery_consumption = batter_power_to_fritz_power(info['v'] / 100 * info['c'] / 100)
+        battery_consumption = battery_power_to_fritz_power(info['v'] / 100 * info['c'] / 100)
       else:
         battery_consumption = 0
 
@@ -133,7 +134,7 @@ while True:
         current_consumption = int(blynk_read_pin('V3')) + battery_consumption
         battery_level = int(blynk_read_pin('V4'))
       else:
-        current_consumption = powerfox_get_reading()
+        current_consumption = shelly_get_reading()
         battery_level = info['b']
 
       log.info(f'battery: {battery_level}%')
@@ -164,12 +165,12 @@ while True:
         if current_consumption > 0:
           charging_power = 0
         else:
-          charging_power = max(0, min(max_charging_power, abs(current_consumption_without_battery) * 0.8))
+          charging_power = max(0, min(max_charging_power, abs(current_consumption_without_battery) * charging_power_factor))
         log.info(f'=> setting charging power to: {charging_power:.0f} W')
         set_charging_power(charging_power)
 
         info = arduino_get_battery_info()
-        watts = batter_power_to_fritz_power(info['v'] / 100 * info['c'] / 100)
+        watts = battery_power_to_fritz_power(info['v'] / 100 * info['c'] / 100)
         log.info(f"charging {watts:.0f} W")
         blynk_write_pin('V5', watts)
       elif is_discharing():
