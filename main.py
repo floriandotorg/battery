@@ -162,10 +162,7 @@ while True:
           switch_state(STATE_DISCHARGE)
 
       if is_charging():
-        if current_consumption > 0:
-          charging_power = 0
-        else:
-          charging_power = max(0, min(max_charging_power, abs(current_consumption_without_battery) * charging_power_factor))
+        charging_power = max(0, min(max_charging_power, abs(current_consumption_without_battery) * charging_power_factor))
         log.info(f'=> setting charging power to: {charging_power:.0f} W')
         set_charging_power(charging_power)
 
