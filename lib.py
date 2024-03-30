@@ -34,22 +34,27 @@ shelly_pass = os.getenv("SHELLY_PASSWORD")
 log = logging.getLogger(__name__)
 
 def get_fritz_sid():
-  res = httpx.get(f'{fritz_url}/login_sid.lua?username={fritz_user}')
-  for item in ET.fromstring(res.text).findall('./Challenge'):
-    challenge = item.text
-  md5_sum = hashlib.md5()
-  md5_sum.update((challenge + '-' + fritz_password).encode('utf_16_le'))
-  response = f'{challenge}-{md5_sum.hexdigest()}'
-  res = httpx.get(f'{fritz_url}/login_sid.lua?username={fritz_user}&response={response}')
-  for item in ET.fromstring(res.text).findall('./SID'):
-    return item.text
+  for _ in range(5):
+    res = httpx.get(f'{fritz_url}/login_sid.lua?username={fritz_user}')
+    for item in ET.fromstring(res.text).findall('./Challenge'):
+      challenge = item.text
+    md5_sum = hashlib.md5()
+    md5_sum.update((challenge + '-' + fritz_password).encode('utf_16_le'))
+    response = f'{challenge}-{md5_sum.hexdigest()}'
+    res = httpx.get(f'{fritz_url}/login_sid.lua?username={fritz_user}&response={response}')
+    for item in ET.fromstring(res.text).findall('./SID'):
+      if item.text != '0000000000000000':
+        return item.text
+    log.warn('Fritz!Box SID could not be retrieved, retrying in 1s')
+    time.sleep(1)
+
   raise Exception('Fritz!Box SID could not be retrieved')
 
 def fritz_send_command(cmd, ain):
   sid = get_fritz_sid()
   res = httpx.get(f'{fritz_url}/webservices/homeautoswitch.lua?switchcmd={cmd}&sid={sid}&ain={ain}')
   if res.status_code != 200:
-    raise Exception(f'Fritz!Box API call failed: {res.text}')
+    raise Exception(f'Fritz!Box API call failed: {res.status_code} {res.text} ({sid})')
   return res.text
 
 def fritz_charge_switch_on():
