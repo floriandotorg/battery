@@ -1,3 +1,5 @@
 .env
 __pycache__
-calibration.json
+calibration*.json
+*.log
+log*.txt
