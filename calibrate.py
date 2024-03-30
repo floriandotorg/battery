@@ -28,6 +28,7 @@ try:
         print('data implausible, retrying ..')
         continue
       break
+    print(f'power setting {n}')
     print_result(data)
     result.append(data)
 

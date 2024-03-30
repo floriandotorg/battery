@@ -2,12 +2,9 @@ import traceback
 import time
 import json
 import logging
-import xml.etree.ElementTree as ET
 import numpy as np
 from collections import deque
 from statistics import median
-from urllib.parse import quote
-from datetime import datetime, time as dt_time
 from lib import *
 
 logging.basicConfig(level='DEBUG', format='[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M')
@@ -15,15 +12,17 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 interval_time = 1
-history_length = 120
-charging_efficiency = 0.8
+history_length_discharge_start = int(20*60/(interval_time+1))
+history_length_discharge_stop = int(30/(interval_time+1))
+history_length_charge_start = int(2*60/(interval_time+1))
+history_length_charge_stop = history_length_charge_start
 charging_power_factor = 0.9
-discharge_power = 85
-discharge_minimum_consumption = 100
+discharge_power = 160
+discharge_minimum_consumption = 140
+charge_minimum_consumption = -100
 
 with open('calibration.json') as file:
   calibration = json.load(file)
-
 charging_power_levels = [c['fritz'] for c in calibration]
 
 battery_power_to_fritz_power_fit = np.polyfit([c['battery'] for c in calibration], charging_power_levels, deg=5)
@@ -37,9 +36,6 @@ def everything_off():
   fritz_charge_switch_off()
   arduino_set_power_setting(0)
   arduino_set_relais(0)
-
-def clamp_amp(a):
-  return max(0, min(a, 5))
 
 def set_charging_power(power):
   for n, level in enumerate(charging_power_levels):
@@ -57,18 +53,6 @@ def set_charging():
 def set_discharging():
   fritz_discharge_switch_on()
 
-def is_discharge_time():
-  return True
-
-  # simulation
-  if blynk_read_pin('V2') == '1':
-    return blynk_read_pin('V7') == '1'
-
-  check_time = datetime.utcnow().time()
-  begin_time = dt_time(20,0)
-  end_time = dt_time(3,00)
-  return check_time >= begin_time or check_time <= end_time
-
 STATE_DISCHARGE = -1
 STATE_IDLE = 0
 STATE_CHARGE = 1
@@ -84,7 +68,7 @@ state_names = {
 while True:
   try:
     state = STATE_INIT
-    buff = deque(maxlen=history_length)
+    buff = deque(maxlen=max(history_length_discharge_start, history_length_discharge_stop, history_length_charge_start, history_length_charge_stop))
 
     def is_charging():
       return state > 0
@@ -150,16 +134,19 @@ while True:
       log.info(f'current consumption without battery: {current_consumption_without_battery:.0f} W')
 
       buff.append(current_consumption)
-      if len(buff) >= history_length:
-        median_current_consumption = median(buff)
-        if is_idle() and median_current_consumption < -50 and battery_level < battery_level_max: # and not is_discharge_time()
-          switch_state(STATE_CHARGE)
-        elif (is_charging() and median_current_consumption > 0) or (is_charging() and battery_level >= battery_level_max):
-          switch_state(STATE_IDLE)
-        elif is_discharing() and (battery_level <= battery_level_min or not is_discharge_time() or (median_current_consumption + discharge_power) < discharge_minimum_consumption):
-          switch_state(STATE_IDLE)
-        elif is_idle() and is_discharge_time() and battery_level >= battery_level_discharge_min and median_current_consumption >= discharge_minimum_consumption:
-          switch_state(STATE_DISCHARGE)
+      buffvals = list(buff)
+
+      if len(buffvals) >= history_length_discharge_stop and is_discharing() and (battery_level <= battery_level_min or (median(buffvals[-history_length_discharge_stop:]) + discharge_power) < discharge_minimum_consumption):
+        switch_state(STATE_IDLE)
+
+      if len(buffvals) >= history_length_discharge_start and is_idle() and battery_level >= battery_level_discharge_min and median(buffvals[-history_length_discharge_start:]) >= discharge_minimum_consumption:
+        switch_state(STATE_DISCHARGE)
+
+      if len(buffvals) >= history_length_charge_start and is_idle() and median(buffvals[-history_length_charge_start:]) < charge_minimum_consumption and battery_level < battery_level_max:
+        switch_state(STATE_CHARGE)
+
+      if len(buffvals) >= history_length_charge_stop and is_charging() and (median(buffvals[-history_length_charge_stop:]) > 0 or battery_level >= battery_level_max):
+        switch_state(STATE_IDLE)
 
       if is_charging():
         charging_power = max(0, min(max_charging_power, abs(current_consumption_without_battery) * charging_power_factor))
