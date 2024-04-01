@@ -1,8 +1,13 @@
 services:
   python:
-    build: .
-    restart: always
+    image: python:3.12
+    restart: unless-stopped
+    privileged: true
     volumes:
       - ./:/app
+      - /var/www/html:/www
       - ./pip.conf:/etc/pip.conf
+    environment:
+      - PYTHONUNBUFFERED=1
+    # command: sh -c "cd /app && pip install --upgrade pip && pip install -r requirements.txt && tail -f /dev/null"
     command:  sh -c "cd /app && pip install --upgrade pip && pip install -r requirements.txt && python -u main.py"
