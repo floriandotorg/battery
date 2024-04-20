@@ -12,13 +12,18 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 interval_time = 0.5
-history_length_discharge_start = int(20*60/(interval_time+1))
-history_length_discharge_stop = int(30/(interval_time+1))
-history_length_charge_start = int(2*60/(interval_time+1))
-history_length_charge_stop = history_length_charge_start
-discharge_minimum_consumption = 50
+history_length_discharge_start = int(30/(interval_time))
+history_length_discharge_stop = int(60/(interval_time))
+history_length_charge_start = int(2*60/(interval_time))
+history_length_charge_stop = int(30/(interval_time))
+discharge_minimum_consumption = 100
 charge_minimum_consumption = -650
 charge_power = 557
+discharge_power_factor = 1.05
+charge_cutoff_voltage = 3.5
+charge_release_voltage = 3.3
+dischage_cutoff_voltage = 3.0
+discharge_release_voltage = 3.2
 charge_ac_relay_pin = 17
 charge_dc_relay_pin = 27
 
@@ -43,7 +48,7 @@ class State(Enum):
     DISCHARGE = -1
     IDLE = 0
     CHARGE = 1
-    INIT = 99   
+    INIT = 99
 
 while True:
     try:
@@ -59,7 +64,7 @@ while True:
             log.info(f'====> switch state {state} -> {newState}')
 
             discharge_power = 0
-            
+
             if newState == State.CHARGE:
                 set_charging()
             elif newState == State.DISCHARGE:
@@ -93,20 +98,34 @@ while True:
             buff.append(current_consumption)
             buffvals = list(buff)
 
-            if len(buffvals) >= history_length_discharge_stop and state == State.DISCHARGE and (median(buffvals[-history_length_discharge_stop:]) + discharge_power) < discharge_minimum_consumption:
+            bms_data = get_jkbms_data()
+
+            # stop discharging if current consumption is below discharge_minimum_consumption
+            if state == State.DISCHARGE and (len(buffvals) >= history_length_discharge_stop and median(buffvals[-history_length_discharge_stop:]) + discharge_power) < discharge_minimum_consumption:
                 switch_state(State.IDLE)
 
-            if len(buffvals) >= history_length_discharge_start and state == State.IDLE and median(buffvals[-history_length_discharge_start:]) >= discharge_minimum_consumption:
+            # stop discharging if any cell is below dischage_cutoff_voltage
+            if state == State.DISCHARGE and min(bms_data['cell_voltages']) <= dischage_cutoff_voltage:
+                switch_state(State.IDLE)
+
+            # start discharging if current consumption is above discharge_minimum_consumption and no cell is below discharge_release_voltage
+            if state == State.IDLE and len(buffvals) >= history_length_discharge_start and median(buffvals[-history_length_discharge_start:]) >= discharge_minimum_consumption and min(bms_data['cell_voltages']) >= discharge_release_voltage:
                 switch_state(State.DISCHARGE)
 
-            if len(buffvals) >= history_length_charge_start and state == State.IDLE and median(buffvals[-history_length_charge_start:]) < charge_minimum_consumption:
+            # start charging if current consumption is below charge_minimum_consumption and no cell is above charge_release_voltage
+            if state == State.IDLE and len(buffvals) >= history_length_charge_start and median(buffvals[-history_length_charge_start:]) < charge_minimum_consumption and max(bms_data['cell_voltages']) <= charge_release_voltage:
                 switch_state(State.CHARGE)
 
-            if len(buffvals) >= history_length_charge_stop and state == State.CHARGE and median(buffvals[-history_length_charge_stop:]) > 0:
+            # stop charging if current consumption is above charge_minimum_consumption
+            if state == State.CHARGE and len(buffvals) >= history_length_charge_stop and  median(buffvals[-history_length_charge_stop:]) > 0:
+                switch_state(State.IDLE)
+
+            # stop charging if any cell is above charge_cutoff_voltage
+            if state == State.CHARGE and max(bms_data['cell_voltages']) >= charge_cutoff_voltage:
                 switch_state(State.IDLE)
 
             if state == State.DISCHARGE:
-                discharge_power = int(max(0, min(600, current_consumption_without_battery)))
+                discharge_power = int(max(0, min(600, current_consumption_without_battery))) * discharge_power_factor
                 log.info(f"setting inverter to {discharge_power}")
                 for _ in range(100):
                     soyo_set_power(discharge_power)
@@ -114,7 +133,9 @@ while True:
             with open('/www/battery.json', 'w') as file:
                 json.dump({
                     'state': str(state),
-                    'power': battery_consumption,
+                    'battery_percentage': bms_data['battery_percentage'],
+                    'battery_power': bms_data['battery_power'],
+                    'avg_cell_voltage': sum(bms_data['cell_voltages']) / len(bms_data['cell_voltages']),
                 }, file)
 
             time.sleep(interval_time)
