@@ -1,5 +1,6 @@
 import traceback
 import time
+from datetime import datetime, timezone
 import logging
 import json
 from collections import deque
@@ -21,7 +22,7 @@ charge_minimum_consumption = -650
 charge_power = 557
 discharge_power_factor = 1.05
 charge_cutoff_voltage = 3.5
-charge_release_voltage = 3.3
+charge_release_voltage = 3.33
 dischage_cutoff_voltage = 3.0
 discharge_release_voltage = 3.2
 charge_ac_relay_pin = 17
@@ -51,6 +52,7 @@ class State(Enum):
     INIT = 99
 
 while True:
+    last_error = None
     try:
         discharge_power = 0
         state = State.INIT
@@ -79,6 +81,8 @@ while True:
         switch_state(State.IDLE)
 
         while True:
+            interval_start_time = time.perf_counter()
+
             if state == State.CHARGE:
                 battery_consumption = charge_power
             elif state == State.DISCHARGE:
@@ -101,11 +105,13 @@ while True:
             bms_data = get_jkbms_data()
 
             # stop discharging if current consumption is below discharge_minimum_consumption
-            if state == State.DISCHARGE and (len(buffvals) >= history_length_discharge_stop and median(buffvals[-history_length_discharge_stop:]) + discharge_power) < discharge_minimum_consumption:
+            if state == State.DISCHARGE and len(buffvals) >= history_length_discharge_stop and median(buffvals[-history_length_discharge_stop:]) + discharge_power < discharge_minimum_consumption:
+                log.info('stopping discharge because of low consumption')
                 switch_state(State.IDLE)
 
             # stop discharging if any cell is below dischage_cutoff_voltage
             if state == State.DISCHARGE and min(bms_data['cell_voltages']) <= dischage_cutoff_voltage:
+                log.info('stopping discharge because of low cell voltage')
                 switch_state(State.IDLE)
 
             # start discharging if current consumption is above discharge_minimum_consumption and no cell is below discharge_release_voltage
@@ -117,36 +123,41 @@ while True:
                 switch_state(State.CHARGE)
 
             # stop charging if current consumption is above charge_minimum_consumption
-            if state == State.CHARGE and len(buffvals) >= history_length_charge_stop and  median(buffvals[-history_length_charge_stop:]) > 0:
+            if state == State.CHARGE and len(buffvals) >= history_length_charge_stop and median(buffvals[-history_length_charge_stop:]) > 0:
+                log.info('stopping charge because of high consumption')
                 switch_state(State.IDLE)
 
             # stop charging if any cell is above charge_cutoff_voltage
             if state == State.CHARGE and max(bms_data['cell_voltages']) >= charge_cutoff_voltage:
+                log.info('stopping charge because of high cell voltage')
                 switch_state(State.IDLE)
 
             if state == State.DISCHARGE:
-                discharge_power = int(max(0, min(600, current_consumption_without_battery))) * discharge_power_factor
+                discharge_power = int(max(0, min(600, current_consumption_without_battery * discharge_power_factor)))
                 log.info(f"setting inverter to {discharge_power}")
-                for _ in range(100):
+                for _ in range(50):
                     soyo_set_power(discharge_power)
 
             with open('/www/battery.json', 'w') as file:
                 json.dump({
+                    'last_updated': datetime.now(timezone.utc).isoformat(),
+                    'last_error': last_error,
                     'state': str(state),
                     'battery_percentage': bms_data['battery_percentage'],
                     'battery_power': bms_data['battery_power'],
                     'avg_cell_voltage': sum(bms_data['cell_voltages']) / len(bms_data['cell_voltages']),
                 }, file)
 
-            time.sleep(interval_time)
+            time.sleep(max(0, interval_time - (time.perf_counter() - interval_start_time)))
     except KeyboardInterrupt:
         break
     except Exception as err:
         log.warning(f'==========> ERROR: {err}')
         log.warning(traceback.format_exc())
+        last_error = datetime.now(timezone.utc).isoformat()
     finally:
         try:
             everything_off()
         except Exception as err:
-            log.error(f'==========> ERROR: {err}')
+            log.error(f'==========> ERROR DURING SHUTDOWN: {err}')
             log.error(traceback.format_exc())
