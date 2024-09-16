@@ -18,11 +18,10 @@ history_length_discharge_stop = int(60/(interval_time))
 history_length_charge_start = int(2*60/(interval_time))
 history_length_charge_stop = int(30/(interval_time))
 discharge_minimum_consumption = 100
-charge_minimum_consumption = -1000
-charge_power = 850
+charge_minimum_consumption = -600 # 1000
+charge_power = 510  # 850
 discharge_power_factor = 1.05
-charge_cutoff_voltage = 3.5
-charge_maximum_percentage = 90
+charge_cutoff_voltage = 3.4
 dischage_cutoff_voltage = 3.0
 discharge_minimum_percentage = 20
 charging_pins = [0,1,5,6,13,22,23,24,26,27]
@@ -32,9 +31,14 @@ def everything_off():
     set_charing_pins(True)
 
 def set_charing_pins(onoff):
-    for pin in charging_pins:
-        gpio_set_pin(pin, onoff)
-        time.sleep(0.5)
+    if not onoff:
+        for pin in charging_pins[:6]:
+            gpio_set_pin(pin, False)
+            time.sleep(0.5)
+    else:
+        for pin in charging_pins:
+            gpio_set_pin(pin, True)
+            time.sleep(0.5)
 
 def set_charging():
     soyo_set_power(0)
@@ -49,6 +53,8 @@ class State(Enum):
     IDLE = 0
     CHARGE = 1
     INIT = 99
+
+was_fully_charged_today = False
 
 while True:
     last_error = None
@@ -81,6 +87,9 @@ while True:
 
         while True:
             interval_start_time = time.perf_counter()
+
+            if datetime.now().hour >= 0 and datetime.now().hour < 3:
+                was_fully_charged_today = False
 
             if state == State.CHARGE:
                 battery_consumption = charge_power
@@ -118,7 +127,7 @@ while True:
                 switch_state(State.DISCHARGE)
 
             # start charging if current consumption is below charge_minimum_consumption and no cell is above charge_release_voltage
-            if state == State.IDLE and len(buffvals) >= history_length_charge_start and median(buffvals[-history_length_charge_start:]) < charge_minimum_consumption and bms_data['battery_percentage'] < charge_maximum_percentage:
+            if state == State.IDLE and len(buffvals) >= history_length_charge_start and median(buffvals[-history_length_charge_start:]) < charge_minimum_consumption and was_fully_charged_today == False:
                 switch_state(State.CHARGE)
 
             # stop charging if current consumption is above charge_minimum_consumption
@@ -130,6 +139,7 @@ while True:
             if state == State.CHARGE and max(bms_data['cell_voltages']) >= charge_cutoff_voltage:
                 log.info('stopping charge because of high cell voltage')
                 switch_state(State.IDLE)
+                was_fully_charged_today = True
 
             if state == State.DISCHARGE:
                 discharge_power = int(max(0, min(600, current_consumption_without_battery * discharge_power_factor)))
