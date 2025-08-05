@@ -12,6 +12,8 @@ shelly_url = os.getenv("SHELLY_URL")
 shelly_user = os.getenv("SHELLY_USER")
 shelly_pass = os.getenv("SHELLY_PASSWORD")
 
+shelly_charging_url = os.getenv("SHELLY_CHARGING_URL")
+
 log = logging.getLogger(__name__)
 
 
@@ -21,12 +23,19 @@ def gpio_set_pin(pin, val):
     GPIO.output(pin, GPIO.HIGH if val else GPIO.LOW)
 
 def shelly_get_reading():
-    with httpx.Client(timeout=5.0, transport=httpx.HTTPTransport(retries=3)) as client:
-        res = httpx.get(
+    with httpx.Client(timeout=10.0, transport=httpx.HTTPTransport(retries=10)) as client:
+        res = client.get(
             f"{shelly_url}/status", auth=httpx.BasicAuth(shelly_user, shelly_pass)
         ).json()
     [a, b, c] = res["emeters"]
     return a["power"] + b["power"] + c["power"]
+
+def shelly_get_charging_reading():
+    with httpx.Client(timeout=10.0, transport=httpx.HTTPTransport(retries=10)) as client:
+        res = httpx.get(
+            f"{shelly_charging_url}/rpc/PM1.GetStatus?id=0"
+        ).json()
+    return res["apower"]
 
 def soyo_set_power(power):
     def calc_checksum(b1, b2, b3, b4, b5, b6):

@@ -9,5 +9,5 @@ services:
       - ./pip.conf:/etc/pip.conf
     environment:
       - PYTHONUNBUFFERED=1
-    # command: sh -c "cd /app && pip install --upgrade pip && pip install -r requirements.txt && tail -f /dev/null"
+        # command: sh -c "cd /app && pip install --upgrade pip && pip install -r requirements.txt && tail -f /dev/null"
     command:  sh -c "cd /app && pip install --upgrade pip && pip install -r requirements.txt && python -u main.py"
